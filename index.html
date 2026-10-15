@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Simcoe Line Watch</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
 /* Layout: status banner on top (colour + sentence), controls, then the map with your trail. Everything runs on this device; nothing is sent anywhere. */
 :root {
@@ -66,7 +67,7 @@ button { font: inherit; font-weight: 700; border-radius: 8px; border: 1px solid 
 button.secondary { background: var(--surface); color: var(--ink); border-color: var(--line); font-weight: 500; padding: 12px 14px; }
 button.big { flex: 1 1 200px; font-size: 1.05rem; }
 button[aria-pressed="true"] { border-color: var(--ink); }
-:is(button, input, canvas):focus-visible { outline: 3px solid var(--wt); outline-offset: 2px; }
+:is(button, input):focus-visible { outline: 3px solid var(--wt); outline-offset: 2px; }
 
 .msg { margin: 0; font-size: 0.9rem; color: var(--muted); }
 .msg.err { color: var(--bad); font-weight: 600; }
@@ -74,9 +75,9 @@ button[aria-pressed="true"] { border-color: var(--ink); }
 
 .mapbox { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px; display: grid; gap: 8px; }
 .stage { position: relative; }
-canvas { display: block; width: 100%; aspect-ratio: 1 / 1.05; border-radius: 6px; background: var(--map-bg); touch-action: none; }
-.zoom { position: absolute; right: 8px; top: 8px; display: grid; gap: 6px; }
-.zoom button { width: 38px; height: 38px; padding: 0; font-size: 1.2rem; background: var(--surface); color: var(--ink); border: 1px solid var(--line); }
+#map { width: 100%; aspect-ratio: 1 / 1.05; border-radius: 6px; background: var(--map-bg); isolation: isolate; z-index: 0; }
+.follow { position: absolute; right: 8px; top: 8px; z-index: 5; }
+.follow button { width: 40px; height: 40px; padding: 0; font-size: 1.2rem; background: #fff; color: #14232b; border: 2px solid rgba(0,0,0,0.3); border-radius: 4px; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.8rem; color: var(--muted); }
 .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 2px solid; margin-right: 5px; vertical-align: -1px; }
 .sw.s { border-color: var(--simcoe); background: color-mix(in srgb, var(--simcoe) 25%, transparent); }
@@ -117,13 +118,10 @@ details p { margin: 0 0 10px; }
 
   <div class="mapbox">
     <div class="stage">
-      <canvas id="map" tabindex="0" role="img" aria-label="Map with Simcoe County, the Williams Treaties lands and your trail"></canvas>
-      <div class="zoom">
-        <button type="button" id="zin" aria-label="Zoom in">+</button>
-        <button type="button" id="zout" aria-label="Zoom out">&minus;</button>
-        <button type="button" id="zme" aria-label="Follow my position" title="Follow me">&#9678;</button>
-      </div>
+      <div id="map" role="region" aria-label="Map with Simcoe County, the Williams Treaties lands and your trail"></div>
+      <div class="follow"><button type="button" id="zme" aria-label="Follow my position" title="Follow me">&#9678;</button></div>
     </div>
+    <p class="msg err" id="mapmsg"></p>
     <div class="legend">
       <span><i class="sw s"></i>Simcoe County</span>
       <span><i class="sw w"></i>Williams Treaties 1923 lands</span>
@@ -144,6 +142,7 @@ details p { margin: 0 0 10px; }
     <p>The county outline is the geographic Simcoe County from Land Information Ontario, so Barrie and Orillia are inside it. Georgian Bay islands such as Christian Island are not drawn. The outline is generalized along the shore, so waterfront spots can read as just outside.</p>
     <p>The warning band is 1.5 km plus your current GPS accuracy. Inside that band the banner turns amber and the page cannot say for sure which side you are on.</p>
     <p>The Williams Treaties outline is the 1923 territory as generalized by Indigenous Services Canada. It is not a map of where you may fish. Earlier treaty lands, such as Peterborough and the Kawarthas, are left out of it.</p>
+    <p>The street map is OpenStreetMap, loaded over the internet, so you need data or wifi for it. The county and treaty outlines and the status banner still work without it.</p>
     <p>Alerts: a tone and a vibration (vibration works on Android only) when you move toward or past the county line, repeated every 30 seconds while you are outside. No position is saved or sent anywhere. The trail disappears when you close the page.</p>
   </details>
 </main>
@@ -210,85 +209,59 @@ window.BC = (function () {
 
 </script>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 (function () {
   var D = window.BC;
   var $ = function (id) { return document.getElementById(id); };
-  var cv = $("map"), ctx = cv.getContext("2d");
-  var COSR = Math.cos(44.8 * Math.PI / 180);
-  var W = 0, H = 0, dpr = 1;
-  var view = { lon: -79.7, lat: 44.4, s: 300, fit: 300 };
-  var cur = null, trail = [], follow = true, watchId = null, wake = null;
+  var cur = null, trail = [], follow = true, watchId = null, wake = null, placed = false;
   var lastLevel = null, lastAlert = 0, muted = false, audio = null, lastFixAt = 0;
+  var map = null, layers = {};
 
   function css(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
-  function px(lon, lat) { return [(lon - view.lon) * COSR * view.s + W / 2, -(lat - view.lat) * view.s + H / 2]; }
-  function ll(x, y) { return [(x - W / 2) / (COSR * view.s) + view.lon, -(y - H / 2) / view.s + view.lat]; }
-  function clamp(s) { return Math.max(view.fit * 0.8, Math.min(view.fit * 120, s)); }
-  function fit() {
-    view.lon = -79.65; view.lat = 44.4;
-    view.fit = Math.min(W / (1.5 * COSR), H / 1.2); view.s = view.fit;
+  function flip(rings) { return rings.map(function (r) { return [r.map(function (p) { return [p[1], p[0]]; })]; }); }
+
+  // ---------- map ----------
+  function styleLayers() {
+    if (!map) return;
+    layers.wt.setStyle({ color: css("--wt"), weight: 2, fillColor: css("--wt"), fillOpacity: 0.12 });
+    layers.simcoe.setStyle({ color: css("--simcoe"), weight: 3, fillColor: css("--simcoe"), fillOpacity: 0.14 });
+    layers.trail.setStyle({ color: css("--you"), weight: 4, opacity: 0.9 });
+    layers.dot.setStyle({ color: "#ffffff", weight: 3, fillColor: css("--you"), fillOpacity: 1 });
+    layers.halo.setStyle({ color: css("--you"), weight: 1, fillColor: css("--you"), fillOpacity: 0.15 });
   }
-  function trace(rings) {
-    ctx.beginPath();
-    rings.forEach(function (r) {
-      r.forEach(function (p, i) { var q = px(p[0], p[1]); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); });
-      ctx.closePath();
-    });
+  function initMap() {
+    if (!window.L) {
+      $("mapmsg").textContent = "The map could not load. It needs an internet connection. Tracking and the banner still work.";
+      return;
+    }
+    map = L.map("map", { zoomControl: true, worldCopyJump: false });
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+    layers.wt = L.polygon(flip(D.WT), { interactive: false }).addTo(map);
+    layers.simcoe = L.polygon(flip(D.SIMCOE), { interactive: false }).addTo(map);
+    layers.trail = L.polyline([], { interactive: false }).addTo(map);
+    layers.halo = L.circle([44.4, -79.65], { radius: 1, interactive: false });
+    layers.dot = L.circleMarker([44.4, -79.65], { radius: 8, interactive: false });
+    styleLayers();
+    map.fitBounds(layers.simcoe.getBounds(), { padding: [10, 10] });
+    map.on("dragstart", function () { follow = false; });
+    if (window.ResizeObserver) new ResizeObserver(function () { map.invalidateSize(); }).observe($("map"));
+    try { window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", styleLayers); } catch (x) {}
   }
-
-  function draw() {
-    if (!W) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = css("--map-bg"); ctx.fillRect(0, 0, W, H);
-    var step = view.s > 6000 ? 0.01 : view.s > 2500 ? 0.025 : view.s > 900 ? 0.05 : view.s > 450 ? 0.1 : view.s > 200 ? 0.25 : 0.5;
-    var tl = ll(0, 0), br = ll(W, H);
-    ctx.lineWidth = 1; ctx.strokeStyle = css("--grid"); ctx.fillStyle = css("--muted");
-    ctx.font = "10px " + css("--font-mono"); ctx.textBaseline = "top";
-    for (var lo = Math.ceil(tl[0] / step) * step; lo <= br[0]; lo += step) {
-      var x = Math.round(px(lo, 0)[0]) + 0.5; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-      ctx.fillText(Math.abs(Math.round(lo * 1000) / 1000) + "°W", x + 3, H - 13);
+  function showMe(p) {
+    if (!map) return;
+    var ll = [p.lat, p.lng];
+    layers.halo.setLatLng(ll).setRadius(Math.max(p.acc, 5)).addTo(map);
+    layers.dot.setLatLng(ll).addTo(map);
+    layers.dot.bringToFront();
+    layers.trail.setLatLngs(trail.map(function (t) { return [t.lat, t.lng]; }));
+    if (follow) {
+      if (!placed) { map.setView(ll, 14); placed = true; }
+      else map.panTo(ll, { animate: true });
     }
-    for (var la = Math.ceil(br[1] / step) * step; la <= tl[1]; la += step) {
-      var y = Math.round(px(0, la)[1]) + 0.5; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-      ctx.fillText(Math.round(la * 1000) / 1000 + "°N", 4, y + 3);
-    }
-    trace(D.WT); ctx.globalAlpha = 0.2; ctx.fillStyle = css("--wt"); ctx.fill();
-    ctx.globalAlpha = 1; ctx.lineWidth = 1.6; ctx.strokeStyle = css("--wt"); ctx.lineJoin = "round"; ctx.stroke();
-    trace(D.SIMCOE); ctx.globalAlpha = 0.26; ctx.fillStyle = css("--simcoe"); ctx.fill();
-    ctx.globalAlpha = 1; ctx.lineWidth = 2.2; ctx.strokeStyle = css("--simcoe"); ctx.stroke();
-
-    var tier = view.s > 1500 ? 3 : view.s > 450 ? 2 : 1;
-    ctx.font = "500 11px " + css("--font-ui"); ctx.textBaseline = "middle";
-    D.CITIES.forEach(function (c) {
-      if (c[3] > tier) return;
-      var q = px(c[2], c[1]);
-      if (q[0] < -20 || q[0] > W + 20 || q[1] < -20 || q[1] > H + 20) return;
-      ctx.fillStyle = css("--ink"); ctx.beginPath(); ctx.arc(q[0], q[1], 2.5, 0, 6.2832); ctx.fill();
-      ctx.lineWidth = 3; ctx.strokeStyle = css("--map-bg"); ctx.strokeText(c[0], q[0] + 6, q[1]);
-      ctx.fillStyle = css("--ink"); ctx.fillText(c[0], q[0] + 6, q[1]);
-    });
-
-    if (trail.length > 1) {
-      ctx.lineWidth = 3; ctx.strokeStyle = css("--you"); ctx.lineCap = "round"; ctx.lineJoin = "round";
-      ctx.beginPath();
-      trail.forEach(function (p, i) { var q = px(p.lng, p.lat); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); });
-      ctx.stroke();
-    }
-    if (cur) {
-      var m = px(cur.lng, cur.lat), halo = Math.max(10, cur.acc / 1000 / 110.57 * view.s);
-      ctx.globalAlpha = 0.2; ctx.fillStyle = css("--you"); ctx.beginPath(); ctx.arc(m[0], m[1], halo, 0, 6.2832); ctx.fill(); ctx.globalAlpha = 1;
-      ctx.lineWidth = 3.5; ctx.strokeStyle = css("--surface"); ctx.fillStyle = css("--you");
-      ctx.beginPath(); ctx.arc(m[0], m[1], 7, 0, 6.2832); ctx.stroke(); ctx.fill();
-    }
-  }
-
-  function resize() {
-    var w = cv.clientWidth, h = cv.clientHeight; if (!w || !h) return;
-    dpr = Math.min(window.devicePixelRatio || 1, 3);
-    var first = !W; W = w; H = h; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
-    if (first) fit(); else view.fit = Math.min(W / (1.5 * COSR), H / 1.2);
-    draw();
   }
 
   // ---------- status ----------
@@ -354,8 +327,7 @@ window.BC = (function () {
   function onFix(p, fromTest) {
     cur = p; lastFixAt = Date.now();
     if (!fromTest) { trail.push(p); if (trail.length > 400) trail.shift(); }
-    if (follow || !W) { view.lon = p.lng; view.lat = p.lat; if (view.s < 1200) view.s = 1500; }
-    render(p, fromTest); draw();
+    render(p, fromTest); showMe(p);
   }
 
   // ---------- tracking ----------
@@ -374,9 +346,9 @@ window.BC = (function () {
   function startTracking() {
     errEl.textContent = "";
     if (!navigator.geolocation) { errEl.textContent = "This browser has no location support. Use the test field to try points instead."; return; }
-    audio = audio || null;
     try { if (!muted) { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); if (audio.state === "suspended") audio.resume(); } } catch (x) {}
     $("big").textContent = "Finding you…"; $("sub").textContent = "Waiting for the first location fix."; $("banner").className = "banner idle";
+    follow = true;
     watchId = navigator.geolocation.watchPosition(function (pos) {
       errEl.textContent = "";
       onFix({ lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy || 50, t: pos.timestamp });
@@ -412,44 +384,16 @@ window.BC = (function () {
     var lat = parseFloat(m[1]), lng = parseFloat(m[2]);
     if (lng > 0) lng = -lng;
     if (lat < 41.5 || lat > 57 || lng < -95.5 || lng > -74) { errEl.textContent = "Those coordinates are not in Ontario."; return; }
-    errEl.textContent = ""; follow = true;
+    errEl.textContent = ""; follow = true; placed = false;
     onFix({ lat: lat, lng: lng, acc: 10, t: Date.now(), test: true }, true);
   });
 
-  // ---------- map interaction ----------
-  var ptrs = new Map(), start = null, moved = false, p0 = 0, s0 = 0;
-  function pd() { var a = Array.from(ptrs.values()); return Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]); }
-  function zoomAt(x, y, f) { var a = ll(x, y); view.s = clamp(view.s * f); var b = ll(x, y); view.lon += a[0] - b[0]; view.lat += a[1] - b[1]; draw(); }
-  cv.addEventListener("pointerdown", function (e) {
-    try { cv.setPointerCapture(e.pointerId); } catch (x) {}
-    ptrs.set(e.pointerId, [e.offsetX, e.offsetY]);
-    if (ptrs.size === 1) { start = { x: e.offsetX, y: e.offsetY, lon: view.lon, lat: view.lat }; moved = false; }
-    else if (ptrs.size === 2) { p0 = pd(); s0 = view.s; moved = true; follow = false; }
+  $("zme").addEventListener("click", function () {
+    follow = true;
+    if (map && cur) map.setView([cur.lat, cur.lng], Math.max(map.getZoom(), 14));
   });
-  cv.addEventListener("pointermove", function (e) {
-    if (!ptrs.has(e.pointerId)) return;
-    ptrs.set(e.pointerId, [e.offsetX, e.offsetY]);
-    if (ptrs.size === 2) { view.s = clamp(s0 * pd() / (p0 || 1)); draw(); return; }
-    if (start) {
-      var dx = e.offsetX - start.x, dy = e.offsetY - start.y;
-      if (Math.hypot(dx, dy) > 6) { moved = true; follow = false; }
-      if (moved) { view.lon = start.lon - dx / (COSR * view.s); view.lat = start.lat + dy / view.s; draw(); }
-    }
-  });
-  function up(e) {
-    ptrs.delete(e.pointerId);
-    if (ptrs.size === 0) start = null;
-    if (ptrs.size === 1) { var r = Array.from(ptrs.values())[0]; start = { x: r[0], y: r[1], lon: view.lon, lat: view.lat }; moved = true; }
-  }
-  cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
-  cv.addEventListener("wheel", function (e) { e.preventDefault(); follow = false; zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.25 : 0.8); }, { passive: false });
-  $("zin").addEventListener("click", function () { zoomAt(W / 2, H / 2, 1.6); });
-  $("zout").addEventListener("click", function () { zoomAt(W / 2, H / 2, 1 / 1.6); });
-  $("zme").addEventListener("click", function () { follow = true; if (cur) { view.lon = cur.lng; view.lat = cur.lat; if (view.s < 1200) view.s = 1500; } else fit(); draw(); });
 
-  if (window.ResizeObserver) new ResizeObserver(resize).observe(cv); else window.addEventListener("resize", resize);
-  try { window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw); } catch (x) {}
-  resize();
+  initMap();
 })();
 </script>
 </body>
