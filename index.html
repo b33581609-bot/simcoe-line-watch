@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Simcoe Line Watch</title>
+<style>
+/* Layout: status banner on top (colour + sentence), controls, then the map with your trail. Everything runs on this device; nothing is sent anywhere. */
+:root {
+  --bg: #edf0f1; --surface: #f8f9f9; --ink: #14232b; --muted: #566871; --line: #c9d2d6;
+  --simcoe: #a8741a; --wt: #2b6a9e; --you: #1769c2;
+  --ok: #1f6b4f; --ok-bg: #d9eee4; --amber: #8a5a00; --amber-bg: #f8e8bf; --bad: #9c2f12; --bad-bg: #f6d9cd;
+  --map-bg: #e4eaec; --grid: #c6d0d4;
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1a20; --surface: #16252d; --ink: #e6edf0; --muted: #93a4ad; --line: #2a3c45;
+    --simcoe: #dba646; --wt: #5ea6de; --you: #6db3ff;
+    --ok: #62c9a0; --ok-bg: #173a2d; --amber: #f0c25a; --amber-bg: #43340f; --bad: #f2996e; --bad-bg: #4a2316;
+    --map-bg: #0b151a; --grid: #1d2e36;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1a20; --surface: #16252d; --ink: #e6edf0; --muted: #93a4ad; --line: #2a3c45;
+  --simcoe: #dba646; --wt: #5ea6de; --you: #6db3ff;
+  --ok: #62c9a0; --ok-bg: #173a2d; --amber: #f0c25a; --amber-bg: #43340f; --bad: #f2996e; --bad-bg: #4a2316;
+  --map-bg: #0b151a; --grid: #1d2e36;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 15px; line-height: 1.45;
+  padding-block: max(14px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 720px; margin: 0 auto; display: grid; gap: 14px; }
+h1 { margin: 0; font-size: 1.25rem; letter-spacing: -0.01em; }
+.top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.top .small { font-size: 0.8rem; color: var(--muted); }
+
+.banner { border-radius: 10px; padding: 18px 16px; display: grid; gap: 4px; border: 2px solid var(--line); background: var(--surface); }
+.banner .big { font-size: 1.6rem; line-height: 1.15; font-weight: 800; text-wrap: balance; }
+.banner .sub { font-size: 1rem; }
+.banner.idle { border-color: var(--line); }
+.banner.in { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+.banner.edge-in { background: var(--amber-bg); border-color: var(--amber); color: var(--amber); }
+.banner.edge-out, .banner.out { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
+.banner.weak { background: var(--amber-bg); border-color: var(--amber); color: var(--amber); }
+.banner.flash { animation: flash 0.6s 3; }
+@keyframes flash { 50% { filter: brightness(1.35); transform: scale(1.01); } }
+@media (prefers-reduced-motion: reduce) { .banner.flash { animation: none; } }
+
+.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.fact { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.fact .k { font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.fact .v { font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.fact .v.mono { font-family: var(--font-mono); font-weight: 500; font-size: 0.85rem; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 8px; }
+button { font: inherit; font-weight: 700; border-radius: 8px; border: 1px solid var(--ink); background: var(--ink); color: var(--bg); padding: 12px 18px; cursor: pointer; }
+button.secondary { background: var(--surface); color: var(--ink); border-color: var(--line); font-weight: 500; padding: 12px 14px; }
+button.big { flex: 1 1 200px; font-size: 1.05rem; }
+button[aria-pressed="true"] { border-color: var(--ink); }
+:is(button, input, canvas):focus-visible { outline: 3px solid var(--wt); outline-offset: 2px; }
+
+.msg { margin: 0; font-size: 0.9rem; color: var(--muted); }
+.msg.err { color: var(--bad); font-weight: 600; }
+.note { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 0.88rem; }
+
+.mapbox { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px; display: grid; gap: 8px; }
+.stage { position: relative; }
+canvas { display: block; width: 100%; aspect-ratio: 1 / 1.05; border-radius: 6px; background: var(--map-bg); touch-action: none; }
+.zoom { position: absolute; right: 8px; top: 8px; display: grid; gap: 6px; }
+.zoom button { width: 38px; height: 38px; padding: 0; font-size: 1.2rem; background: var(--surface); color: var(--ink); border: 1px solid var(--line); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.8rem; color: var(--muted); }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 2px solid; margin-right: 5px; vertical-align: -1px; }
+.sw.s { border-color: var(--simcoe); background: color-mix(in srgb, var(--simcoe) 25%, transparent); }
+.sw.w { border-color: var(--wt); background: color-mix(in srgb, var(--wt) 22%, transparent); }
+.sw.y { border-color: var(--you); background: var(--you); border-radius: 50%; }
+
+.test { display: flex; gap: 8px; }
+.test input { flex: 1; min-width: 0; font: inherit; font-family: var(--font-mono); font-size: 0.9rem; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; font-size: 0.9rem; }
+summary { cursor: pointer; padding: 10px 0; font-weight: 700; }
+details p { margin: 0 0 10px; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="top"><h1>Simcoe Line Watch</h1><span class="small">Runs on this device only</span></div>
+
+  <section id="banner" class="banner idle" aria-live="assertive">
+    <div class="big" id="big">Not tracking yet</div>
+    <div class="sub" id="sub">Tap Start tracking and allow location.</div>
+  </section>
+
+  <div class="facts">
+    <div class="fact"><div class="k">Williams Treaties 1923 lands</div><div class="v" id="wt">—</div></div>
+    <div class="fact"><div class="k">Distance to county line</div><div class="v" id="dist">—</div></div>
+    <div class="fact"><div class="k">Position</div><div class="v mono" id="pos">—</div></div>
+    <div class="fact"><div class="k">Fix accuracy</div><div class="v" id="acc">—</div></div>
+  </div>
+  <p class="msg" id="age" aria-live="polite"></p>
+  <p class="msg err" id="err" role="alert"></p>
+
+  <div class="controls">
+    <button type="button" class="big" id="start">Start tracking</button>
+    <button type="button" class="secondary" id="mute" aria-pressed="false">Sound on</button>
+  </div>
+
+  <div class="note">Keep this screen on and this page open. Phones pause location updates when the screen locks or you switch apps, so tracking stops then. The page asks the phone to keep the screen awake while it runs.</div>
+
+  <div class="mapbox">
+    <div class="stage">
+      <canvas id="map" tabindex="0" role="img" aria-label="Map with Simcoe County, the Williams Treaties lands and your trail"></canvas>
+      <div class="zoom">
+        <button type="button" id="zin" aria-label="Zoom in">+</button>
+        <button type="button" id="zout" aria-label="Zoom out">&minus;</button>
+        <button type="button" id="zme" aria-label="Follow my position" title="Follow me">&#9678;</button>
+      </div>
+    </div>
+    <div class="legend">
+      <span><i class="sw s"></i>Simcoe County</span>
+      <span><i class="sw w"></i>Williams Treaties 1923 lands</span>
+      <span><i class="sw y"></i>You and your trail</span>
+    </div>
+  </div>
+
+  <div>
+    <label for="tp" class="msg">Try a point without moving (latitude, longitude)</label>
+    <div class="test">
+      <input id="tp" type="text" inputmode="decimal" placeholder="44.2645, -79.9912" autocomplete="off">
+      <button type="button" class="secondary" id="tpgo">Test</button>
+    </div>
+  </div>
+
+  <details>
+    <summary>How this works and where it can be wrong</summary>
+    <p>The county outline is the geographic Simcoe County from Land Information Ontario, so Barrie and Orillia are inside it. Georgian Bay islands such as Christian Island are not drawn. The outline is generalized along the shore, so waterfront spots can read as just outside.</p>
+    <p>The warning band is 1.5 km plus your current GPS accuracy. Inside that band the banner turns amber and the page cannot say for sure which side you are on.</p>
+    <p>The Williams Treaties outline is the 1923 territory as generalized by Indigenous Services Canada. It is not a map of where you may fish. Earlier treaty lands, such as Peterborough and the Kawarthas, are left out of it.</p>
+    <p>Alerts: a tone and a vibration (vibration works on Android only) when you move toward or past the county line, repeated every 30 seconds while you are outside. No position is saved or sent anywhere. The trail disappears when you close the page.</p>
+  </details>
+</main>
+
+<script>
+
+window.BC = (function () {
+  // Simcoe County (geographic county, LIO). One ring, [lon, lat].
+  var SIMCOE = [[-79.622,44.883],[-79.644,44.888],[-79.658,44.886],[-79.681,44.873],[-79.687,44.866],[-79.687,44.860],[-79.681,44.841],[-79.680,44.810],[-79.680,44.808],[-79.691,44.806],[-79.691,44.810],[-79.698,44.810],[-79.714,44.798],[-79.716,44.792],[-79.714,44.787],[-79.708,44.762],[-79.701,44.755],[-79.688,44.756],[-79.678,44.755],[-79.658,44.736],[-79.659,44.734],[-79.669,44.736],[-79.688,44.745],[-79.704,44.750],[-79.719,44.747],[-79.738,44.732],[-79.739,44.731],[-79.748,44.737],[-79.757,44.751],[-79.759,44.756],[-79.762,44.758],[-79.775,44.751],[-79.780,44.751],[-79.781,44.743],[-79.786,44.736],[-79.794,44.733],[-79.798,44.739],[-79.797,44.746],[-79.805,44.758],[-79.817,44.761],[-79.835,44.757],[-79.844,44.753],[-79.851,44.742],[-79.853,44.742],[-79.856,44.743],[-79.863,44.748],[-79.869,44.751],[-79.883,44.752],[-79.887,44.756],[-79.887,44.761],[-79.869,44.775],[-79.867,44.784],[-79.869,44.791],[-79.875,44.799],[-79.886,44.802],[-79.912,44.799],[-79.920,44.799],[-79.928,44.797],[-79.930,44.789],[-79.927,44.781],[-79.928,44.772],[-79.934,44.765],[-79.938,44.759],[-79.944,44.759],[-79.945,44.761],[-79.936,44.781],[-79.940,44.791],[-79.940,44.799],[-79.921,44.813],[-79.904,44.823],[-79.899,44.834],[-79.914,44.849],[-79.927,44.852],[-79.946,44.853],[-79.962,44.856],[-79.980,44.851],[-80.004,44.847],[-80.014,44.842],[-80.025,44.842],[-80.031,44.840],[-80.043,44.819],[-80.052,44.808],[-80.054,44.794],[-80.062,44.791],[-80.072,44.795],[-80.074,44.809],[-80.080,44.812],[-80.113,44.804],[-80.125,44.799],[-80.130,44.792],[-80.130,44.775],[-80.132,44.766],[-80.132,44.754],[-80.123,44.738],[-80.107,44.733],[-80.092,44.731],[-80.079,44.724],[-80.037,44.708],[-80.019,44.693],[-79.995,44.679],[-79.989,44.668],[-79.977,44.657],[-79.977,44.653],[-79.989,44.617],[-80.005,44.596],[-80.013,44.591],[-80.013,44.584],[-80.004,44.583],[-80.001,44.584],[-79.994,44.581],[-79.992,44.577],[-79.992,44.566],[-79.996,44.557],[-80.003,44.543],[-80.014,44.531],[-80.054,44.491],[-80.057,44.490],[-80.073,44.479],[-80.083,44.472],[-80.108,44.467],[-80.127,44.466],[-80.145,44.473],[-80.161,44.482],[-80.198,44.500],[-80.220,44.500],[-80.227,44.503],[-80.233,44.511],[-80.248,44.510],[-80.260,44.513],[-80.272,44.513],[-80.275,44.518],[-80.283,44.520],[-80.287,44.516],[-80.293,44.518],[-80.269,44.407],[-80.233,44.244],[-80.214,44.247],[-80.030,44.291],[-79.990,44.117],[-79.966,44.018],[-79.949,43.944],[-79.821,43.973],[-79.773,43.983],[-79.650,44.011],[-79.625,44.017],[-79.624,44.017],[-79.616,44.023],[-79.610,44.028],[-79.607,44.031],[-79.602,44.037],[-79.593,44.043],[-79.589,44.045],[-79.577,44.052],[-79.572,44.056],[-79.569,44.060],[-79.564,44.064],[-79.560,44.066],[-79.557,44.069],[-79.553,44.074],[-79.550,44.079],[-79.549,44.084],[-79.548,44.087],[-79.546,44.091],[-79.543,44.094],[-79.541,44.097],[-79.540,44.100],[-79.540,44.102],[-79.540,44.105],[-79.541,44.107],[-79.542,44.111],[-79.543,44.114],[-79.542,44.119],[-79.542,44.125],[-79.540,44.131],[-79.538,44.135],[-79.534,44.140],[-79.531,44.145],[-79.527,44.148],[-79.527,44.149],[-79.522,44.152],[-79.518,44.155],[-79.516,44.156],[-79.514,44.157],[-79.513,44.158],[-79.512,44.162],[-79.512,44.163],[-79.512,44.166],[-79.513,44.171],[-79.513,44.174],[-79.513,44.175],[-79.513,44.183],[-79.514,44.188],[-79.514,44.189],[-79.513,44.194],[-79.513,44.197],[-79.511,44.202],[-79.504,44.210],[-79.501,44.219],[-79.500,44.234],[-79.505,44.247],[-79.515,44.264],[-79.500,44.295],[-79.512,44.321],[-79.472,44.413],[-79.255,44.451],[-79.164,44.466],[-79.159,44.469],[-79.156,44.473],[-79.152,44.476],[-79.147,44.481],[-79.144,44.485],[-79.139,44.489],[-79.134,44.493],[-79.129,44.496],[-79.126,44.498],[-79.124,44.499],[-79.117,44.502],[-79.116,44.503],[-79.110,44.505],[-79.104,44.507],[-79.098,44.511],[-79.093,44.514],[-79.087,44.517],[-79.084,44.520],[-79.080,44.522],[-79.094,44.553],[-79.149,44.673],[-79.153,44.682],[-79.203,44.790],[-79.339,44.756],[-79.350,44.753],[-79.350,44.755],[-79.350,44.759],[-79.352,44.762],[-79.357,44.764],[-79.366,44.767],[-79.370,44.768],[-79.378,44.770],[-79.379,44.770],[-79.386,44.771],[-79.388,44.770],[-79.389,44.769],[-79.390,44.768],[-79.390,44.767],[-79.390,44.764],[-79.390,44.762],[-79.389,44.760],[-79.388,44.758],[-79.388,44.757],[-79.390,44.756],[-79.391,44.756],[-79.392,44.756],[-79.393,44.756],[-79.394,44.757],[-79.396,44.762],[-79.397,44.769],[-79.396,44.773],[-79.394,44.778],[-79.393,44.781],[-79.394,44.785],[-79.393,44.786],[-79.393,44.788],[-79.393,44.790],[-79.393,44.793],[-79.392,44.795],[-79.391,44.798],[-79.389,44.798],[-79.389,44.799],[-79.386,44.800],[-79.384,44.801],[-79.380,44.802],[-79.379,44.804],[-79.378,44.805],[-79.377,44.806],[-79.376,44.809],[-79.376,44.811],[-79.377,44.812],[-79.378,44.815],[-79.378,44.816],[-79.378,44.817],[-79.378,44.818],[-79.379,44.821],[-79.379,44.824],[-79.381,44.826],[-79.382,44.826],[-79.383,44.828],[-79.384,44.828],[-79.386,44.828],[-79.388,44.828],[-79.389,44.828],[-79.390,44.827],[-79.393,44.826],[-79.395,44.826],[-79.398,44.826],[-79.399,44.826],[-79.402,44.827],[-79.405,44.828],[-79.407,44.828],[-79.409,44.828],[-79.410,44.828],[-79.411,44.828],[-79.411,44.826],[-79.410,44.825],[-79.411,44.825],[-79.412,44.825],[-79.414,44.825],[-79.419,44.825],[-79.425,44.826],[-79.429,44.826],[-79.430,44.827],[-79.431,44.827],[-79.431,44.828],[-79.429,44.829],[-79.427,44.830],[-79.425,44.830],[-79.423,44.830],[-79.418,44.829],[-79.414,44.830],[-79.411,44.831],[-79.408,44.832],[-79.406,44.833],[-79.406,44.834],[-79.405,44.836],[-79.407,44.836],[-79.408,44.837],[-79.409,44.837],[-79.411,44.838],[-79.414,44.837],[-79.418,44.837],[-79.420,44.836],[-79.424,44.835],[-79.429,44.834],[-79.434,44.834],[-79.440,44.833],[-79.445,44.834],[-79.453,44.834],[-79.456,44.834],[-79.462,44.835],[-79.465,44.836],[-79.466,44.836],[-79.468,44.837],[-79.472,44.838],[-79.482,44.839],[-79.489,44.841],[-79.498,44.842],[-79.505,44.843],[-79.510,44.843],[-79.514,44.843],[-79.518,44.843],[-79.522,44.843],[-79.526,44.844],[-79.529,44.845],[-79.532,44.846],[-79.535,44.848],[-79.537,44.850],[-79.541,44.852],[-79.546,44.854],[-79.550,44.856],[-79.557,44.858],[-79.563,44.858],[-79.569,44.860],[-79.574,44.861],[-79.578,44.862],[-79.583,44.862],[-79.587,44.863],[-79.592,44.865],[-79.598,44.868],[-79.602,44.870],[-79.606,44.871],[-79.610,44.873],[-79.613,44.874],[-79.615,44.875],[-79.617,44.877],[-79.618,44.879],[-79.618,44.882],[-79.619,44.883]];
+
+  // Williams Treaties (1923), ISC generalized, simplified to ~0.003 deg. Three rings (mainland, two island groups).
+  var WT = [
+   [[-78.738,46.385],[-79.026,46.277],[-79.365,46.365],[-79.41,46.365],[-79.43,46.36],[-79.484,46.332],[-79.498,46.319],[-79.509,46.325],[-79.558,46.333],[-79.593,46.327],[-79.633,46.353],[-79.649,46.355],[-79.659,46.348],[-79.668,46.349],[-79.688,46.365],[-79.713,46.366],[-79.764,46.348],[-79.778,46.319],[-79.802,46.326],[-79.813,46.324],[-79.82,46.322],[-79.83,46.305],[-79.844,46.301],[-79.87,46.321],[-79.912,46.332],[-79.933,46.331],[-79.989,46.314],[-79.984,46.329],[-79.992,46.343],[-79.988,46.353],[-79.997,46.37],[-80.012,46.365],[-80.021,46.353],[-80.016,46.337],[-80.019,46.334],[-80.042,46.331],[-80.036,46.321],[-80.008,46.306],[-80.019,46.299],[-80.031,46.31],[-80.057,46.316],[-80.059,46.327],[-80.065,46.334],[-80.086,46.328],[-80.1,46.332],[-80.121,46.32],[-80.213,46.327],[-80.211,46.321],[-80.201,46.316],[-80.157,46.312],[-80.156,46.298],[-80.134,46.293],[-80.18,46.281],[-80.193,46.283],[-80.197,46.282],[-80.197,46.276],[-80.147,46.274],[-80.134,46.266],[-80.108,46.265],[-80.098,46.263],[-80.089,46.253],[-80.091,46.248],[-80.117,46.249],[-80.142,46.262],[-80.217,46.246],[-80.222,46.251],[-80.21,46.258],[-80.213,46.261],[-80.27,46.245],[-80.302,46.258],[-80.306,46.255],[-80.3,46.245],[-80.27,46.238],[-80.261,46.229],[-80.28,46.224],[-80.319,46.231],[-80.348,46.25],[-80.373,46.238],[-80.369,46.232],[-80.356,46.23],[-80.353,46.225],[-80.368,46.209],[-80.366,46.202],[-80.334,46.221],[-80.318,46.219],[-80.298,46.209],[-80.203,46.228],[-80.183,46.219],[-80.155,46.226],[-80.136,46.225],[-80.074,46.241],[-80.057,46.236],[-79.979,46.235],[-79.97,46.233],[-79.966,46.222],[-79.906,46.226],[-79.905,46.221],[-79.939,46.215],[-79.943,46.209],[-79.893,46.209],[-79.923,46.185],[-79.927,46.201],[-79.961,46.184],[-79.963,46.187],[-79.949,46.197],[-79.959,46.198],[-79.981,46.186],[-79.996,46.164],[-80.074,46.179],[-80.108,46.176],[-80.112,46.173],[-80.109,46.17],[-80.053,46.164],[-80.045,46.157],[-80.069,46.153],[-80.096,46.158],[-80.14,46.15],[-80.146,46.146],[-80.145,46.141],[-80.113,46.143],[-80.109,46.134],[-80.082,46.127],[-80.083,46.12],[-80.1,46.115],[-80.124,46.118],[-80.167,46.11],[-80.179,46.104],[-80.179,46.1],[-80.167,46.096],[-80.177,46.092],[-80.19,46.091],[-80.211,46.102],[-80.248,46.107],[-80.253,46.101],[-80.225,46.098],[-80.217,46.093],[-80.223,46.088],[-80.263,46.095],[-80.293,46.091],[-80.299,46.086],[-80.299,46.08],[-80.388,46.053],[-80.667,46.038],[-80.771,46.013],[-80.751,46.001],[-80.748,45.994],[-80.76,45.983],[-80.768,45.983],[-80.773,45.995],[-80.783,46.003],[-80.808,46.006],[-80.81,46.0],[-80.802,45.995],[-80.814,45.975],[-80.828,45.967],[-80.829,45.957],[-80.837,45.954],[-80.843,45.957],[-80.847,45.969],[-80.851,45.966],[-80.854,45.95],[-80.865,45.938],[-80.864,45.926],[-80.84,45.925],[-80.811,45.953],[-80.802,45.955],[-80.798,45.952],[-80.796,45.931],[-80.802,45.916],[-80.794,45.909],[-80.786,45.914],[-80.771,45.962],[-80.759,45.969],[-80.752,45.96],[-80.764,45.937],[-80.757,45.93],[-80.745,45.952],[-80.737,45.948],[-80.743,45.93],[-80.733,45.911],[-80.744,45.899],[-80.73,45.889],[-80.739,45.882],[-80.73,45.855],[-80.712,45.859],[-80.693,45.849],[-80.684,45.85],[-80.624,45.871],[-80.618,45.868],[-80.626,45.86],[-80.68,45.836],[-80.712,45.837],[-80.718,45.829],[-80.706,45.822],[-80.667,45.816],[-80.667,45.811],[-80.679,45.807],[-80.679,45.803],[-80.659,45.797],[-80.658,45.782],[-80.653,45.779],[-80.643,45.782],[-80.632,45.774],[-80.631,45.759],[-80.655,45.742],[-80.657,45.733],[-80.631,45.744],[-80.623,45.736],[-80.638,45.728],[-80.588,45.689],[-80.604,45.682],[-80.6,45.676],[-80.59,45.669],[-80.573,45.675],[-80.557,45.666],[-80.557,45.66],[-80.583,45.656],[-80.574,45.643],[-80.528,45.637],[-80.52,45.627],[-80.506,45.621],[-80.502,45.615],[-80.516,45.615],[-80.526,45.609],[-80.524,45.589],[-80.509,45.589],[-80.491,45.61],[-80.483,45.608],[-80.486,45.595],[-80.508,45.568],[-80.492,45.563],[-80.425,45.583],[-80.416,45.595],[-80.429,45.607],[-80.448,45.61],[-80.45,45.617],[-80.44,45.622],[-80.421,45.623],[-80.412,45.619],[-80.405,45.609],[-80.387,45.599],[-80.382,45.593],[-80.385,45.586],[-80.408,45.585],[-80.405,45.577],[-80.39,45.569],[-80.381,45.538],[-80.382,45.531],[-80.391,45.524],[-80.387,45.51],[-80.397,45.486],[-80.394,45.458],[-80.386,45.443],[-80.373,45.433],[-80.35,45.432],[-80.342,45.442],[-80.333,45.437],[-80.329,45.428],[-80.3,45.423],[-80.296,45.418],[-80.308,45.411],[-80.31,45.381],[-80.298,45.37],[-80.294,45.359],[-80.263,45.363],[-80.237,45.358],[-80.224,45.341],[-80.197,45.351],[-80.16,45.338],[-80.159,45.352],[-80.176,45.368],[-80.208,45.374],[-80.214,45.38],[-80.196,45.378],[-80.194,45.385],[-80.202,45.397],[-80.183,45.386],[-80.178,45.388],[-80.168,45.403],[-80.152,45.399],[-80.115,45.408],[-80.091,45.406],[-80.073,45.394],[-80.069,45.381],[-80.057,45.371],[-80.056,45.357],[-80.043,45.35],[-80.035,45.338],[-80.037,45.304],[-80.046,45.292],[-80.08,45.28],[-80.114,45.253],[-80.133,45.248],[-80.133,45.23],[-80.129,45.224],[-80.108,45.225],[-80.102,45.237],[-80.093,45.234],[-80.085,45.223],[-80.107,45.208],[-80.116,45.213],[-80.121,45.206],[-80.116,45.201],[-80.115,45.188],[-80.106,45.186],[-80.093,45.194],[-80.092,45.205],[-80.065,45.215],[-80.06,45.211],[-80.061,45.201],[-80.055,45.198],[-80.051,45.182],[-80.041,45.183],[-80.034,45.193],[-80.028,45.193],[-80.023,45.187],[-80.026,45.176],[-80.014,45.171],[-80.011,45.153],[-80.0,45.151],[-79.995,45.156],[-80.002,45.176],[-79.998,45.181],[-79.976,45.158],[-79.984,45.153],[-79.981,45.135],[-80.031,45.117],[-80.1,45.122],[-80.099,45.117],[-80.022,45.097],[-80.019,45.09],[-80.035,45.088],[-80.08,45.095],[-80.088,45.092],[-80.088,45.086],[-80.062,45.086],[-80.05,45.077],[-80.055,45.073],[-80.046,45.066],[-80.017,45.065],[-79.998,45.052],[-79.992,45.055],[-79.989,45.065],[-79.961,45.07],[-79.952,45.069],[-79.94,45.055],[-79.907,45.047],[-79.905,45.043],[-79.913,45.04],[-79.929,45.047],[-79.957,45.037],[-79.962,45.039],[-79.961,45.055],[-79.966,45.059],[-79.974,45.057],[-79.986,45.044],[-80.004,45.041],[-79.994,45.027],[-79.982,45.027],[-79.969,45.019],[-79.943,45.022],[-79.932,45.012],[-79.931,45.0],[-79.95,44.989],[-79.937,44.98],[-79.935,44.953],[-79.919,44.959],[-79.916,44.952],[-79.921,44.944],[-79.91,44.944],[-79.899,44.957],[-79.893,44.976],[-79.88,44.976],[-79.845,44.956],[-79.831,44.938],[-79.829,44.93],[-79.842,44.918],[-79.841,44.911],[-79.825,44.903],[-79.802,44.911],[-79.791,44.904],[-79.801,44.891],[-79.784,44.884],[-79.779,44.874],[-79.796,44.879],[-79.824,44.875],[-79.813,44.863],[-79.785,44.856],[-79.781,44.847],[-79.789,44.83],[-79.788,44.823],[-79.782,44.819],[-79.743,44.803],[-79.731,44.825],[-79.716,44.831],[-79.712,44.838],[-79.738,44.86],[-79.746,44.882],[-79.733,44.876],[-79.723,44.86],[-79.717,44.859],[-79.721,44.879],[-79.694,44.892],[-79.685,44.889],[-79.693,44.864],[-79.68,44.853],[-79.681,44.839],[-79.675,44.828],[-79.679,44.823],[-79.709,44.823],[-79.717,44.818],[-79.721,44.802],[-79.708,44.776],[-79.699,44.769],[-79.68,44.772],[-79.654,44.748],[-79.656,44.74],[-79.683,44.758],[-79.706,44.764],[-79.716,44.765],[-79.73,44.756],[-79.711,44.702],[-79.703,44.635],[-79.689,44.603],[-79.665,44.582],[-79.614,44.574],[-79.597,44.576],[-79.547,44.566],[-79.526,44.547],[-79.459,44.512],[-79.495,44.465],[-79.553,44.419],[-79.594,44.402],[-79.689,44.391],[-79.687,44.383],[-79.623,44.375],[-79.528,44.405],[-79.516,44.403],[-79.54,44.37],[-79.535,44.349],[-79.545,44.308],[-79.533,44.303],[-79.546,44.285],[-79.543,44.278],[-79.546,44.275],[-79.526,44.215],[-79.506,44.205],[-79.528,44.191],[-79.574,44.174],[-79.591,44.144],[-79.624,44.069],[-79.639,44.001],[-79.632,43.976],[-79.618,43.961],[-79.597,43.951],[-79.573,43.959],[-79.557,43.958],[-79.532,43.94],[-79.516,43.922],[-79.419,43.765],[-79.389,43.712],[-79.382,43.69],[-79.347,43.643],[-79.318,43.647],[-79.301,43.661],[-79.27,43.673],[-79.253,43.691],[-79.23,43.701],[-79.21,43.721],[-79.192,43.729],[-79.164,43.752],[-79.122,43.774],[-79.088,43.804],[-79.064,43.808],[-79.026,43.806],[-78.976,43.825],[-78.948,43.843],[-78.875,43.844],[-78.806,43.867],[-78.71,43.861],[-78.685,43.868],[-78.671,43.88],[-78.613,43.889],[-78.482,43.893],[-78.435,43.908],[-78.41,43.907],[-78.361,43.929],[-78.3,43.942],[-78.244,43.942],[-78.17,43.957],[-78.117,43.954],[-78.085,43.962],[-78.014,43.964],[-77.973,43.977],[-77.939,43.967],[-77.902,43.979],[-77.873,43.977],[-77.835,44.0],[-77.816,44.005],[-77.746,44.01],[-77.721,43.997],[-77.713,44.0],[-77.713,44.005],[-77.731,44.018],[-77.714,44.022],[-77.712,44.032],[-77.67,44.037],[-77.666,44.033],[-77.678,44.025],[-77.679,44.019],[-77.67,44.017],[-77.651,44.024],[-77.625,44.023],[-77.617,44.034],[-77.595,44.036],[-77.582,44.049],[-77.635,44.1],[-77.648,44.127],[-77.65,44.165],[-77.633,44.237],[-77.636,44.244],[-77.657,44.26],[-77.741,44.271],[-77.761,44.267],[-77.803,44.237],[-77.829,44.235],[-77.841,44.243],[-77.838,44.258],[-77.825,44.27],[-77.848,44.301],[-77.845,44.316],[-77.821,44.356],[-77.827,44.379],[-77.86,44.395],[-77.888,44.397],[-77.926,44.386],[-78.02,44.326],[-78.115,44.279],[-78.106,44.268],[-78.128,44.249],[-78.147,44.219],[-78.158,44.211],[-78.171,44.211],[-78.173,44.203],[-78.188,44.195],[-78.198,44.181],[-78.238,44.154],[-78.261,44.15],[-78.299,44.127],[-78.325,44.12],[-78.343,44.121],[-78.346,44.128],[-78.948,44.085],[-79.013,44.386],[-79.031,44.403],[-79.068,44.423],[-79.092,44.446],[-79.098,44.448],[-79.119,44.474],[-79.132,44.505],[-79.128,44.539],[-79.099,44.577],[-79.094,44.59],[-76.916,45.215],[-77.166,45.859],[-77.195,45.873],[-77.244,45.917],[-77.277,45.938],[-77.294,45.954],[-77.295,45.967],[-77.283,46.008],[-77.296,46.02],[-77.383,46.07],[-77.446,46.097],[-77.546,46.149],[-77.668,46.195],[-77.69,46.189],[-77.737,46.197],[-77.799,46.196],[-77.818,46.206],[-77.881,46.216],[-77.991,46.249],[-78.025,46.249],[-78.048,46.239],[-78.06,46.24],[-78.141,46.274],[-78.19,46.271],[-78.251,46.277],[-78.311,46.258],[-78.396,46.292],[-78.516,46.295],[-78.589,46.316],[-78.626,46.314],[-78.714,46.321],[-78.728,46.329],[-78.732,46.337],[-78.727,46.376],[-78.738,46.385]],
+   [[-80.18,45.23],[-80.174,45.23],[-80.169,45.239],[-80.163,45.272],[-80.147,45.274],[-80.149,45.283],[-80.118,45.284],[-80.105,45.292],[-80.083,45.294],[-80.078,45.312],[-80.059,45.319],[-80.058,45.33],[-80.046,45.341],[-80.047,45.345],[-80.056,45.348],[-80.066,45.345],[-80.078,45.351],[-80.093,45.347],[-80.096,45.331],[-80.109,45.32],[-80.125,45.32],[-80.136,45.329],[-80.172,45.328],[-80.178,45.332],[-80.216,45.316],[-80.227,45.285],[-80.217,45.284],[-80.211,45.279],[-80.216,45.27],[-80.213,45.263],[-80.204,45.262],[-80.196,45.247],[-80.185,45.24],[-80.188,45.232],[-80.18,45.23]],
+   [[-80.439,45.495],[-80.429,45.496],[-80.425,45.517],[-80.413,45.526],[-80.416,45.531],[-80.472,45.519],[-80.472,45.513],[-80.465,45.514],[-80.457,45.503],[-80.439,45.495]]
+  ];
+
+  // Reference towns, [name, lat, lng, tier]. Dots only, for orientation.
+  var CITIES = [
+    ["Toronto",43.653,-79.383,1],["Barrie",44.389,-79.690,1],["Orillia",44.609,-79.420,1],["Peterborough",44.304,-78.319,1],["North Bay",46.309,-79.461,1],
+    ["Midland",44.750,-79.883,2],["Collingwood",44.501,-80.217,2],["Wasaga Beach",44.520,-80.016,2],["Lindsay",44.357,-78.741,2],["Cobourg",43.960,-78.168,2],
+    ["Oshawa",43.897,-78.865,2],["Bracebridge",45.038,-79.309,2],["Huntsville",45.327,-79.216,2],["Parry Sound",45.347,-80.036,2],["Haliburton",45.045,-78.508,2],["Bancroft",45.057,-77.857,2],
+    ["Alliston",44.150,-79.868,3],["Bradford",44.116,-79.566,3],["Bobcaygeon",44.540,-78.546,3],["Gravenhurst",44.919,-79.374,3],["Penetanguishene",44.766,-79.934,3],["Port Hope",43.951,-78.292,3],["Newmarket",44.059,-79.461,3]
+  ];
+
+  function inRing(lon, lat, r) {
+    var c = false;
+    for (var i = 0, j = r.length - 1; i < r.length; j = i++) {
+      var xi = r[i][0], yi = r[i][1], xj = r[j][0], yj = r[j][1];
+      if ((yi > lat) !== (yj > lat) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) c = !c;
+    }
+    return c;
+  }
+  function inside(rings, lon, lat) {
+    for (var i = 0; i < rings.length; i++) if (inRing(lon, lat, rings[i])) return true;
+    return false;
+  }
+  function distKm(rings, lon, lat) {
+    var kx = Math.cos(lat * Math.PI / 180) * 111.32, ky = 110.57, best = Infinity;
+    for (var n = 0; n < rings.length; n++) {
+      var r = rings[n];
+      for (var i = 0, j = r.length - 1; i < r.length; j = i++) {
+        var ax = (r[j][0] - lon) * kx, ay = (r[j][1] - lat) * ky;
+        var bx = (r[i][0] - lon) * kx, by = (r[i][1] - lat) * ky;
+        var dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+        var t = l2 ? -(ax * dx + ay * dy) / l2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        var d = Math.hypot(ax + t * dx, ay + t * dy);
+        if (d < best) best = d;
+      }
+    }
+    return best;
+  }
+  function evaluate(lat, lng) {
+    return {
+      inS: inside([SIMCOE], lng, lat),
+      inW: inside(WT, lng, lat),
+      dS: distKm([SIMCOE], lng, lat),
+      dW: distKm(WT, lng, lat)
+    };
+  }
+  return { SIMCOE: [SIMCOE], WT: WT, CITIES: CITIES, BOUNDS: { w: -81.0, e: -76.7, s: 43.5, n: 46.5 }, evaluate: evaluate };
+})();
+
+</script>
+
+<script>
+(function () {
+  var D = window.BC;
+  var $ = function (id) { return document.getElementById(id); };
+  var cv = $("map"), ctx = cv.getContext("2d");
+  var COSR = Math.cos(44.8 * Math.PI / 180);
+  var W = 0, H = 0, dpr = 1;
+  var view = { lon: -79.7, lat: 44.4, s: 300, fit: 300 };
+  var cur = null, trail = [], follow = true, watchId = null, wake = null;
+  var lastLevel = null, lastAlert = 0, muted = false, audio = null, lastFixAt = 0;
+
+  function css(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+  function px(lon, lat) { return [(lon - view.lon) * COSR * view.s + W / 2, -(lat - view.lat) * view.s + H / 2]; }
+  function ll(x, y) { return [(x - W / 2) / (COSR * view.s) + view.lon, -(y - H / 2) / view.s + view.lat]; }
+  function clamp(s) { return Math.max(view.fit * 0.8, Math.min(view.fit * 120, s)); }
+  function fit() {
+    view.lon = -79.65; view.lat = 44.4;
+    view.fit = Math.min(W / (1.5 * COSR), H / 1.2); view.s = view.fit;
+  }
+  function trace(rings) {
+    ctx.beginPath();
+    rings.forEach(function (r) {
+      r.forEach(function (p, i) { var q = px(p[0], p[1]); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); });
+      ctx.closePath();
+    });
+  }
+
+  function draw() {
+    if (!W) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = css("--map-bg"); ctx.fillRect(0, 0, W, H);
+    var step = view.s > 6000 ? 0.01 : view.s > 2500 ? 0.025 : view.s > 900 ? 0.05 : view.s > 450 ? 0.1 : view.s > 200 ? 0.25 : 0.5;
+    var tl = ll(0, 0), br = ll(W, H);
+    ctx.lineWidth = 1; ctx.strokeStyle = css("--grid"); ctx.fillStyle = css("--muted");
+    ctx.font = "10px " + css("--font-mono"); ctx.textBaseline = "top";
+    for (var lo = Math.ceil(tl[0] / step) * step; lo <= br[0]; lo += step) {
+      var x = Math.round(px(lo, 0)[0]) + 0.5; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+      ctx.fillText(Math.abs(Math.round(lo * 1000) / 1000) + "°W", x + 3, H - 13);
+    }
+    for (var la = Math.ceil(br[1] / step) * step; la <= tl[1]; la += step) {
+      var y = Math.round(px(0, la)[1]) + 0.5; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      ctx.fillText(Math.round(la * 1000) / 1000 + "°N", 4, y + 3);
+    }
+    trace(D.WT); ctx.globalAlpha = 0.2; ctx.fillStyle = css("--wt"); ctx.fill();
+    ctx.globalAlpha = 1; ctx.lineWidth = 1.6; ctx.strokeStyle = css("--wt"); ctx.lineJoin = "round"; ctx.stroke();
+    trace(D.SIMCOE); ctx.globalAlpha = 0.26; ctx.fillStyle = css("--simcoe"); ctx.fill();
+    ctx.globalAlpha = 1; ctx.lineWidth = 2.2; ctx.strokeStyle = css("--simcoe"); ctx.stroke();
+
+    var tier = view.s > 1500 ? 3 : view.s > 450 ? 2 : 1;
+    ctx.font = "500 11px " + css("--font-ui"); ctx.textBaseline = "middle";
+    D.CITIES.forEach(function (c) {
+      if (c[3] > tier) return;
+      var q = px(c[2], c[1]);
+      if (q[0] < -20 || q[0] > W + 20 || q[1] < -20 || q[1] > H + 20) return;
+      ctx.fillStyle = css("--ink"); ctx.beginPath(); ctx.arc(q[0], q[1], 2.5, 0, 6.2832); ctx.fill();
+      ctx.lineWidth = 3; ctx.strokeStyle = css("--map-bg"); ctx.strokeText(c[0], q[0] + 6, q[1]);
+      ctx.fillStyle = css("--ink"); ctx.fillText(c[0], q[0] + 6, q[1]);
+    });
+
+    if (trail.length > 1) {
+      ctx.lineWidth = 3; ctx.strokeStyle = css("--you"); ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.beginPath();
+      trail.forEach(function (p, i) { var q = px(p.lng, p.lat); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); });
+      ctx.stroke();
+    }
+    if (cur) {
+      var m = px(cur.lng, cur.lat), halo = Math.max(10, cur.acc / 1000 / 110.57 * view.s);
+      ctx.globalAlpha = 0.2; ctx.fillStyle = css("--you"); ctx.beginPath(); ctx.arc(m[0], m[1], halo, 0, 6.2832); ctx.fill(); ctx.globalAlpha = 1;
+      ctx.lineWidth = 3.5; ctx.strokeStyle = css("--surface"); ctx.fillStyle = css("--you");
+      ctx.beginPath(); ctx.arc(m[0], m[1], 7, 0, 6.2832); ctx.stroke(); ctx.fill();
+    }
+  }
+
+  function resize() {
+    var w = cv.clientWidth, h = cv.clientHeight; if (!w || !h) return;
+    dpr = Math.min(window.devicePixelRatio || 1, 3);
+    var first = !W; W = w; H = h; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    if (first) fit(); else view.fit = Math.min(W / (1.5 * COSR), H / 1.2);
+    draw();
+  }
+
+  // ---------- status ----------
+  function fmtDist(d) { return d < 1 ? Math.round(d * 1000) + " m" : d.toFixed(1) + " km"; }
+  function classify(p) {
+    var e = D.evaluate(p.lat, p.lng), warn = 1.5 + p.acc / 1000;
+    var level;
+    if (p.acc > 750) level = "weak";
+    else if (e.dS < warn) level = e.inS ? "edge-in" : "edge-out";
+    else level = e.inS ? "in" : "out";
+    return { e: e, level: level, warn: warn };
+  }
+  var TEXT = {
+    "in": function (c) { return ["Inside Simcoe County", fmtDist(c.e.dS) + " from the nearest county line."]; },
+    "edge-in": function (c) { return ["Near the county line", "Still inside, " + fmtDist(c.e.dS) + " from the line."]; },
+    "edge-out": function (c) { return ["Just outside the county line", fmtDist(c.e.dS) + " past the line. That is within GPS and outline error. Treat it as outside."]; },
+    "out": function (c) { return ["Outside Simcoe County", fmtDist(c.e.dS) + " past the county line. Get permission before going."]; },
+    "weak": function (c) { return ["Location too rough to tell", "The phone only has a rough fix. Move to open sky, or check your maps app."]; }
+  };
+
+  function beep(n, freq) {
+    if (muted) return;
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.state === "suspended") audio.resume();
+      var t = audio.currentTime;
+      for (var i = 0; i < n; i++) {
+        var o = audio.createOscillator(), g = audio.createGain();
+        o.type = "square"; o.frequency.value = freq; o.connect(g); g.connect(audio.destination);
+        g.gain.setValueAtTime(0.0001, t + i * 0.3); g.gain.exponentialRampToValueAtTime(0.25, t + i * 0.3 + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.3 + 0.2);
+        o.start(t + i * 0.3); o.stop(t + i * 0.3 + 0.22);
+      }
+    } catch (x) {}
+  }
+  function buzz(pattern) { try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (x) {} }
+  function alertFor(level) {
+    if (level === "edge-in") { beep(2, 660); buzz([200, 120, 200]); }
+    else if (level === "edge-out" || level === "out") { beep(3, 330); buzz([500, 150, 500, 150, 500]); }
+  }
+
+  function render(p, fromTest) {
+    var c = classify(p), banner = $("banner");
+    var t = TEXT[c.level](c);
+    $("big").textContent = t[0]; $("sub").textContent = t[1];
+    banner.className = "banner " + c.level;
+    $("wt").textContent = c.e.dW < c.warn ? "Near the line" : (c.e.inW ? "Inside" : "Outside");
+    $("dist").textContent = fmtDist(c.e.dS) + (c.e.inS ? " inside" : " outside");
+    $("pos").textContent = p.lat.toFixed(5) + ", " + p.lng.toFixed(5);
+    $("acc").textContent = (fromTest ? "test point" : "±" + Math.round(p.acc) + " m");
+    var now = Date.now();
+    if (c.level !== lastLevel) {
+      if (lastLevel !== null || c.level !== "in") {
+        banner.classList.remove("flash"); void banner.offsetWidth; banner.classList.add("flash");
+        alertFor(c.level); lastAlert = now;
+      }
+      lastLevel = c.level;
+    } else if ((c.level === "out" || c.level === "edge-out") && now - lastAlert > 30000) {
+      alertFor(c.level); lastAlert = now;
+    }
+  }
+
+  function onFix(p, fromTest) {
+    cur = p; lastFixAt = Date.now();
+    if (!fromTest) { trail.push(p); if (trail.length > 400) trail.shift(); }
+    if (follow || !W) { view.lon = p.lng; view.lat = p.lat; if (view.s < 1200) view.s = 1500; }
+    render(p, fromTest); draw();
+  }
+
+  // ---------- tracking ----------
+  var errEl = $("err"), startBtn = $("start");
+  function geoError(e) {
+    var m = e && e.code === 1 ? "Location is blocked. Allow location for this page in your browser settings, then tap Start tracking again."
+      : e && e.code === 2 ? "The phone cannot work out a position right now. Try again in open sky."
+      : e && e.code === 3 ? "Waiting a long time for a location fix. Keep the screen on and try moving outside."
+      : "Could not read your location.";
+    errEl.textContent = m;
+    if (e && e.code === 1) stopTracking(true);
+  }
+  async function keepAwake() {
+    try { if (navigator.wakeLock) { wake = await navigator.wakeLock.request("screen"); wake.addEventListener("release", function () { wake = null; }); } } catch (x) {}
+  }
+  function startTracking() {
+    errEl.textContent = "";
+    if (!navigator.geolocation) { errEl.textContent = "This browser has no location support. Use the test field to try points instead."; return; }
+    audio = audio || null;
+    try { if (!muted) { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); if (audio.state === "suspended") audio.resume(); } } catch (x) {}
+    $("big").textContent = "Finding you…"; $("sub").textContent = "Waiting for the first location fix."; $("banner").className = "banner idle";
+    watchId = navigator.geolocation.watchPosition(function (pos) {
+      errEl.textContent = "";
+      onFix({ lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy || 50, t: pos.timestamp });
+    }, geoError, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
+    startBtn.textContent = "Stop tracking"; startBtn.dataset.on = "1";
+    keepAwake();
+  }
+  function stopTracking(silent) {
+    if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+    if (wake) { try { wake.release(); } catch (x) {} wake = null; }
+    startBtn.textContent = "Start tracking"; startBtn.dataset.on = "";
+    if (!silent) { $("big").textContent = "Tracking stopped"; $("sub").textContent = "Tap Start tracking to resume."; $("banner").className = "banner idle"; }
+  }
+  startBtn.addEventListener("click", function () { if (startBtn.dataset.on) stopTracking(); else startTracking(); });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && watchId !== null && !wake) keepAwake(); });
+
+  $("mute").addEventListener("click", function () {
+    muted = !muted; this.textContent = muted ? "Sound off" : "Sound on"; this.setAttribute("aria-pressed", muted ? "true" : "false");
+  });
+
+  setInterval(function () {
+    var el = $("age");
+    if (!lastFixAt) { el.textContent = ""; return; }
+    var s = Math.round((Date.now() - lastFixAt) / 1000);
+    var stamp = new Date(lastFixAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+    el.textContent = watchId === null && !cur.test ? "Last fix " + stamp + "." : (s > 60 ? "No new fix for " + s + " s. Is the screen on and location allowed?" : "Updated " + stamp + ", " + s + " s ago.");
+  }, 1000);
+
+  // ---------- test point ----------
+  $("tpgo").addEventListener("click", function () {
+    var m = $("tp").value.match(/^\s*(-?\d{1,2}(?:\.\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
+    if (!m) { errEl.textContent = "Enter latitude, then longitude, for example 44.2645, -79.9912."; return; }
+    var lat = parseFloat(m[1]), lng = parseFloat(m[2]);
+    if (lng > 0) lng = -lng;
+    if (lat < 41.5 || lat > 57 || lng < -95.5 || lng > -74) { errEl.textContent = "Those coordinates are not in Ontario."; return; }
+    errEl.textContent = ""; follow = true;
+    onFix({ lat: lat, lng: lng, acc: 10, t: Date.now(), test: true }, true);
+  });
+
+  // ---------- map interaction ----------
+  var ptrs = new Map(), start = null, moved = false, p0 = 0, s0 = 0;
+  function pd() { var a = Array.from(ptrs.values()); return Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]); }
+  function zoomAt(x, y, f) { var a = ll(x, y); view.s = clamp(view.s * f); var b = ll(x, y); view.lon += a[0] - b[0]; view.lat += a[1] - b[1]; draw(); }
+  cv.addEventListener("pointerdown", function (e) {
+    try { cv.setPointerCapture(e.pointerId); } catch (x) {}
+    ptrs.set(e.pointerId, [e.offsetX, e.offsetY]);
+    if (ptrs.size === 1) { start = { x: e.offsetX, y: e.offsetY, lon: view.lon, lat: view.lat }; moved = false; }
+    else if (ptrs.size === 2) { p0 = pd(); s0 = view.s; moved = true; follow = false; }
+  });
+  cv.addEventListener("pointermove", function (e) {
+    if (!ptrs.has(e.pointerId)) return;
+    ptrs.set(e.pointerId, [e.offsetX, e.offsetY]);
+    if (ptrs.size === 2) { view.s = clamp(s0 * pd() / (p0 || 1)); draw(); return; }
+    if (start) {
+      var dx = e.offsetX - start.x, dy = e.offsetY - start.y;
+      if (Math.hypot(dx, dy) > 6) { moved = true; follow = false; }
+      if (moved) { view.lon = start.lon - dx / (COSR * view.s); view.lat = start.lat + dy / view.s; draw(); }
+    }
+  });
+  function up(e) {
+    ptrs.delete(e.pointerId);
+    if (ptrs.size === 0) start = null;
+    if (ptrs.size === 1) { var r = Array.from(ptrs.values())[0]; start = { x: r[0], y: r[1], lon: view.lon, lat: view.lat }; moved = true; }
+  }
+  cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+  cv.addEventListener("wheel", function (e) { e.preventDefault(); follow = false; zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.25 : 0.8); }, { passive: false });
+  $("zin").addEventListener("click", function () { zoomAt(W / 2, H / 2, 1.6); });
+  $("zout").addEventListener("click", function () { zoomAt(W / 2, H / 2, 1 / 1.6); });
+  $("zme").addEventListener("click", function () { follow = true; if (cur) { view.lon = cur.lng; view.lat = cur.lat; if (view.s < 1200) view.s = 1500; } else fit(); draw(); });
+
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(cv); else window.addEventListener("resize", resize);
+  try { window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw); } catch (x) {}
+  resize();
+})();
+</script>
+</body>
+</html>
